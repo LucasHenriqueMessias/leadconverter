@@ -1,0 +1,82 @@
+/* Estilos globais para melhor contraste */
+
+/* Melhorar contraste dos placeholders em inputs e selects */
+input::placeholder,
+textarea::placeholder {
+  color: #374151 !important; /* text-gray-700 */
+  opacity: 0.9;
+}
+
+/* Melhorar contraste das opções padrão em selects */
+select {
+  color: #111827 !important; /* text-gray-900 para texto selecionado */
+}
+
+select option {
+  color: #111827 !important; /* text-gray-900 para opções */
+  background-color: #ffffff;
+}
+
+/* Garantir que o primeiro option (placeholder) tenha contraste adequado mas seja diferenciado */
+select option[value=""] {
+  color: #374151 !important; /* text-gray-700 */
+  font-style: italic;
+}
+
+/* Melhorar contraste dos ícones em formulários */
+.form-icon {
+  color: #6b7280 !important; /* text-gray-500 ao invés de text-gray-400 */
+}
+
+/* Melhorar contraste dos textos de ajuda */
+.help-text {
+  color: #4b5563 !important; /* text-gray-600 ao invés de text-gray-500 */
+}
+
+/* Melhorar contraste dos labels desabilitados */
+.disabled-text {
+  color: #6b7280 !important; /* text-gray-500 ao invés de text-gray-400 */
+}
+
+/* Melhorar contraste dos botões secundários */
+.btn-secondary {
+  color: #374151 !important; /* text-gray-700 ao invés de text-gray-500 */
+}
+
+/* Melhorar contraste dos estados vazios */
+.empty-state-text {
+  color: #4b5563 !important; /* text-gray-600 ao invés de text-gray-400 */
+}
+
+/* Estilos específicos para inputs com melhor contraste */
+input[type="text"],
+input[type="email"],
+input[type="tel"],
+input[type="date"],
+input[type="datetime-local"],
+input[type="number"],
+textarea,
+select {
+  color: #111827 !important; /* text-gray-900 */
+}
+
+input[type="text"]:focus,
+input[type="email"]:focus,
+input[type="tel"]:focus,
+input[type="date"]:focus,
+input[type="datetime-local"]:focus,
+input[type="number"]:focus,
+textarea:focus,
+select:focus {
+  color: #111827 !important; /* text-gray-900 */
+}
+
+/* Melhorar contraste dos textos de estados vazios */
+.empty-state {
+  color: #4b5563 !important; /* text-gray-600 */
+}
+
+/* Melhorar contraste de textos informativos */
+.info-text {
+  color: #374151 !important; /* text-gray-700 */
+}
