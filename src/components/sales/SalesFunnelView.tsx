@@ -1,15 +1,19 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { DndContext, DragEndEvent, DragStartEvent, DragOverlay } from '@dnd-kit/core';
 import { collection, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/contexts/AuthContext';
 import { Deal, Client } from '@/types';
-import { Target, Plus } from 'lucide-react';
+import { Target, Plus, ArrowLeft } from 'lucide-react';
 import { DEFAULT_STAGES } from '@/constants/salesFunnel';
 import { FunnelColumn } from './FunnelColumn';
 import { DealForm } from './DealForm';
+import { UserFilter } from './UserFilter';
+import { LostReasonModal } from './LostReasonModal';
+import { FunnelSelector } from './FunnelSelector';
+import { LostReason } from '@/types';
 
 interface SalesFunnelViewProps {
   deals: Deal[];
@@ -18,18 +22,58 @@ interface SalesFunnelViewProps {
 }
 
 export const SalesFunnelView = ({ deals, setDeals, clients }: SalesFunnelViewProps) => {
-  const { user } = useAuth();
+  const { user, isAdmin, isManager, organization } = useAuth();
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingDeal, setEditingDeal] = useState<Deal | null>(null);
   const [selectedStage, setSelectedStage] = useState<string>('');
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [selectedFunnelId, setSelectedFunnelId] = useState<string | null>(null);
+  const [lostReasonModalDeal, setLostReasonModalDeal] = useState<{ deal: Deal; newStage: string } | null>(null);
 
-  const handleDragStart = (event: DragStartEvent) => {
+  // Obter funis da organização
+  const funnels = organization?.settings?.funnels || [];
+  const activeFunnels = funnels.filter(f => f.active);
+  
+  // Obter funil selecionado
+  const selectedFunnel = funnels.find(f => f.id === selectedFunnelId);
+  const stages = selectedFunnel?.stages || DEFAULT_STAGES;
+
+  // Filtrar deals baseado no usuário selecionado, funil e permissões
+  const filteredDeals = useMemo(() => {
+    if (!selectedFunnelId) return [];
+    
+    let dealsToShow = deals;
+
+    // Filtrar por funil
+    dealsToShow = dealsToShow.filter(deal => 
+      deal.funnelId === selectedFunnelId || (!deal.funnelId && selectedFunnelId === 'funnel_inbound')
+    );
+
+    // Se não é admin nem manager, mostrar apenas próprios deals
+    if (!isAdmin && !isManager) {
+      dealsToShow = dealsToShow.filter(deal => deal.userId === user?.id);
+    } else if (selectedUserId) {
+      // Se admin/manager selecionou um usuário específico
+      dealsToShow = dealsToShow.filter(deal => deal.userId === selectedUserId);
+    }
+    // Se admin/manager e não selecionou usuário, mostrar todos
+
+    return dealsToShow;
+  }, [deals, selectedUserId, selectedFunnelId, isAdmin, isManager, user?.id]);
+
+  // Filtrar clientes baseado nos deals visíveis
+  const filteredClients = useMemo(() => {
+    const dealClientIds = new Set(filteredDeals.map(deal => deal.clientId));
+    return clients.filter(client => dealClientIds.has(client.id));
+  }, [clients, filteredDeals]);
+
+  const handleDragStart = useCallback((event: DragStartEvent) => {
     console.log('Drag started:', event.active.id);
     setActiveId(event.active.id as string);
-  };
+  }, []);
 
-  const handleDragEnd = async (event: DragEndEvent) => {
+  const handleDragEnd = useCallback(async (event: DragEndEvent) => {
     const { active, over } = event;
     console.log('Drag ended:', { 
       activeId: active.id, 
@@ -47,7 +91,7 @@ export const SalesFunnelView = ({ deals, setDeals, clients }: SalesFunnelViewPro
     let newStage = over.id as string;
 
     // Se o drop foi sobre um card (ID longo do Firebase), encontrar o stage do card
-    if (newStage.length > 10 && !DEFAULT_STAGES.find(s => s.id === newStage)) {
+    if (newStage.length > 10 && !stages.find(s => s.id === newStage)) {
       const targetDeal = deals.find(d => d.id === newStage);
       if (targetDeal) {
         newStage = targetDeal.stage;
@@ -58,8 +102,8 @@ export const SalesFunnelView = ({ deals, setDeals, clients }: SalesFunnelViewPro
       }
     }
 
-    // Verificar se o stage é válido usando os DEFAULT_STAGES
-    const validStageIds = DEFAULT_STAGES.map(stage => stage.id);
+    // Verificar se o stage é válido usando os stages do funil selecionado
+    const validStageIds = stages.map(stage => stage.id);
     if (!validStageIds.includes(newStage)) {
       console.error('Invalid stage:', newStage, 'Valid stages:', validStageIds);
       return;
@@ -73,9 +117,17 @@ export const SalesFunnelView = ({ deals, setDeals, clients }: SalesFunnelViewPro
 
     console.log(`Moving deal ${dealId} from ${deal.stage} to ${newStage}`);
 
+    // Se está movendo para "closed-lost", mostrar modal de motivo de perda
+    if (newStage === 'closed-lost' && deal.stage !== 'closed-lost') {
+      setLostReasonModalDeal({ deal, newStage });
+      return;
+    }
+
     try {
-      // Atualizar no Firebase
-      await updateDoc(doc(db, 'deals', dealId), {
+      // Atualizar no Firebase usando a estrutura organizacional
+      if (!user?.organizationId) return;
+      
+      await updateDoc(doc(db, `organizations/${user.organizationId}/deals`, dealId), {
         stage: newStage,
         updatedAt: new Date(),
       });
@@ -91,15 +143,18 @@ export const SalesFunnelView = ({ deals, setDeals, clients }: SalesFunnelViewPro
     } catch (error) {
       console.error('Error updating deal stage:', error);
     }
-  };
+  }, [deals, setDeals, stages, db, user]);
 
-  const handleAddDeal = async (dealData: Omit<Deal, 'id' | 'userId' | 'createdAt' | 'updatedAt'>) => {
-    if (!user || !db) return;
+  const handleAddDeal = async (dealData: Omit<Deal, 'id' | 'createdAt' | 'updatedAt'>) => {
+    if (!user || !db || !user.organizationId) return;
 
     try {
-      const docRef = await addDoc(collection(db, 'deals'), {
+      // Para admin/manager, permitir especificar userId, senão usar o próprio
+      const finalUserId = (isAdmin || isManager) && selectedUserId ? selectedUserId : user.id;
+      
+      const docRef = await addDoc(collection(db, `organizations/${user.organizationId}/deals`), {
         ...dealData,
-        userId: user.id,
+        userId: finalUserId,
         createdAt: new Date(),
         updatedAt: new Date(),
       });
@@ -107,7 +162,7 @@ export const SalesFunnelView = ({ deals, setDeals, clients }: SalesFunnelViewPro
       const newDeal: Deal = {
         id: docRef.id,
         ...dealData,
-        userId: user.id,
+        userId: finalUserId,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
@@ -120,11 +175,73 @@ export const SalesFunnelView = ({ deals, setDeals, clients }: SalesFunnelViewPro
     }
   };
 
-  const handleUpdateDeal = async (dealData: Omit<Deal, 'id' | 'userId' | 'createdAt' | 'updatedAt'>) => {
-    if (!editingDeal || !db) return;
+  const handleLostReasonSubmit = async (data: {
+    lostReason: LostReason;
+    lostReasonDetails?: string;
+    lostToCompetitor?: string;
+  }) => {
+    if (!lostReasonModalDeal || !db || !user) return;
+
+    const { deal, newStage } = lostReasonModalDeal;
 
     try {
-      await updateDoc(doc(db, 'deals', editingDeal.id), {
+      // Preparar dados para atualização (remover campos undefined)
+      const updateData: any = {
+        stage: newStage,
+        lostReason: data.lostReason,
+        lostDate: new Date(),
+        closedBy: user.id,
+        updatedAt: new Date(),
+      };
+
+      // Adicionar campos opcionais apenas se tiverem valor
+      if (data.lostReasonDetails) {
+        updateData.lostReasonDetails = data.lostReasonDetails;
+      }
+      if (data.lostToCompetitor) {
+        updateData.lostToCompetitor = data.lostToCompetitor;
+      }
+
+      // Atualizar no Firebase com motivo de perda
+      await updateDoc(doc(db, `organizations/${user.organizationId}/deals`, deal.id), updateData);
+
+      // Atualizar localmente
+      setDeals(deals.map(d => {
+        if (d.id === deal.id) {
+          const localUpdateData: any = {
+            ...d,
+            stage: newStage, 
+            lostReason: data.lostReason,
+            lostDate: new Date(),
+            closedBy: user.id,
+            updatedAt: new Date()
+          };
+
+          if (data.lostReasonDetails) {
+            localUpdateData.lostReasonDetails = data.lostReasonDetails;
+          }
+          if (data.lostToCompetitor) {
+            localUpdateData.lostToCompetitor = data.lostToCompetitor;
+          }
+
+          return localUpdateData;
+        }
+        return d;
+      }));
+
+      setLostReasonModalDeal(null);
+      console.log('Deal marked as lost with reason');
+    } catch (error) {
+      console.error('Error updating deal with lost reason:', error);
+      alert('Erro ao marcar negócio como perdido. Tente novamente.');
+    }
+  };
+
+  const handleUpdateDeal = async (dealData: Omit<Deal, 'id' | 'createdAt' | 'updatedAt'>) => {
+    if (!editingDeal || !db || !user?.organizationId) return;
+
+    try {
+      await updateDoc(doc(db, `organizations/${user.organizationId}/deals`, editingDeal.id), {
         ...dealData,
         updatedAt: new Date(),
       });
@@ -142,10 +259,10 @@ export const SalesFunnelView = ({ deals, setDeals, clients }: SalesFunnelViewPro
   };
 
   const handleDeleteDeal = async (dealId: string) => {
-    if (!confirm('Tem certeza que deseja excluir este negócio?') || !db) return;
+    if (!confirm('Tem certeza que deseja excluir este negócio?') || !db || !user?.organizationId) return;
 
     try {
-      await deleteDoc(doc(db, 'deals', dealId));
+      await deleteDoc(doc(db, `organizations/${user.organizationId}/deals`, dealId));
       setDeals(deals.filter(deal => deal.id !== dealId));
     } catch (error) {
       console.error('Error deleting deal:', error);
@@ -163,10 +280,20 @@ export const SalesFunnelView = ({ deals, setDeals, clients }: SalesFunnelViewPro
     setIsFormOpen(true);
   };
 
-  const totalValue = deals.reduce((sum, deal) => sum + deal.value, 0);
-  const wonDeals = deals.filter(deal => deal.stage === 'closed-won');
+  const totalValue = filteredDeals.reduce((sum, deal) => sum + deal.value, 0);
+  const wonDeals = filteredDeals.filter(deal => deal.stage === 'closed-won');
   const wonValue = wonDeals.reduce((sum, deal) => sum + deal.value, 0);
-  const conversionRate = deals.length > 0 ? (wonDeals.length / deals.length) * 100 : 0;
+  const conversionRate = filteredDeals.length > 0 ? (wonDeals.length / filteredDeals.length) * 100 : 0;
+
+  // Se nenhum funil foi selecionado, mostrar o seletor de funis
+  if (!selectedFunnelId) {
+    return (
+      <FunnelSelector
+        deals={deals}
+        onSelectFunnel={setSelectedFunnelId}
+      />
+    );
+  }
 
   if (clients.length === 0) {
     return (
@@ -193,21 +320,63 @@ export const SalesFunnelView = ({ deals, setDeals, clients }: SalesFunnelViewPro
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold text-gray-900">Funil de Vendas</h2>
-        <button
-          onClick={() => openAddForm('lead')}
-          className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center space-x-2 hover:bg-blue-700"
-        >
-          <Plus className="h-4 w-4" />
-          <span>Novo Negócio</span>
-        </button>
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => setSelectedFunnelId(null)}
+            className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+            title="Voltar para seleção de funis"
+          >
+            <ArrowLeft className="h-5 w-5 text-gray-600" />
+          </button>
+          <div>
+            <div className="flex items-center gap-3">
+              <h2 className="text-2xl font-bold text-gray-900">{selectedFunnel?.name || 'Funil de Vendas'}</h2>
+              {selectedFunnel && (
+                <span 
+                  className="px-3 py-1 rounded-full text-sm font-medium text-white"
+                  style={{ backgroundColor: selectedFunnel.color }}
+                >
+                  {selectedFunnel.type}
+                </span>
+              )}
+            </div>
+            {(isAdmin || isManager) && (
+              <p className="text-gray-600 mt-1">
+                {selectedUserId 
+                  ? `Visualizando deals de um usuário específico`
+                  : `Visualizando deals de ${isAdmin ? 'toda a organização' : 'sua equipe'}`
+                }
+              </p>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center space-x-4">
+          {(isAdmin || isManager) && (
+            <UserFilter 
+              selectedUserId={selectedUserId}
+              onUserChange={setSelectedUserId}
+            />
+          )}
+          <button
+            onClick={() => openAddForm('lead')}
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center space-x-2 hover:bg-blue-700"
+          >
+            <Plus className="h-4 w-4" />
+            <span>Novo Negócio</span>
+          </button>
+        </div>
       </div>
 
       {/* Métricas */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-white rounded-lg shadow p-4">
           <div className="text-sm font-medium text-gray-600">Total de Negócios</div>
-          <div className="text-2xl font-bold text-gray-900">{deals.length}</div>
+          <div className="text-2xl font-bold text-gray-900">{filteredDeals.length}</div>
+          {selectedUserId && (
+            <div className="text-xs text-gray-500 mt-1">
+              {deals.length} no total da organização
+            </div>
+          )}
         </div>
         <div className="bg-white rounded-lg shadow p-4">
           <div className="text-sm font-medium text-gray-600">Valor Total</div>
@@ -236,11 +405,11 @@ export const SalesFunnelView = ({ deals, setDeals, clients }: SalesFunnelViewPro
           onDragEnd={handleDragEnd}
         >
           <div className="flex space-x-6 overflow-x-auto pb-4">
-            {DEFAULT_STAGES.map((stage) => (
+            {stages.map((stage) => (
               <FunnelColumn
                 key={stage.id}
                 stage={stage}
-                deals={deals}
+                deals={filteredDeals}
                 clients={clients}
                 onAddDeal={openAddForm}
                 onEditDeal={openEditForm}
@@ -251,7 +420,7 @@ export const SalesFunnelView = ({ deals, setDeals, clients }: SalesFunnelViewPro
 
           <DragOverlay>
             {activeId ? (() => {
-              const activeDeal = deals.find(deal => deal.id === activeId);
+              const activeDeal = filteredDeals.find(deal => deal.id === activeId);
               const activeClient = activeDeal ? clients.find(c => c.id === activeDeal.clientId) : undefined;
               
               return activeDeal ? (
@@ -300,6 +469,15 @@ export const SalesFunnelView = ({ deals, setDeals, clients }: SalesFunnelViewPro
             setEditingDeal(null);
             setSelectedStage('');
           }}
+        />
+      )}
+
+      {/* Modal de Motivo de Perda */}
+      {lostReasonModalDeal && (
+        <LostReasonModal
+          deal={lostReasonModalDeal.deal}
+          onSubmit={handleLostReasonSubmit}
+          onClose={() => setLostReasonModalDeal(null)}
         />
       )}
     </div>

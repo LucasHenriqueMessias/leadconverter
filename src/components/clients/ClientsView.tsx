@@ -1,12 +1,15 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { collection, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/contexts/AuthContext';
 import { Client } from '@/types';
-import { Plus, Edit, Trash2, Phone, Mail, User } from 'lucide-react';
+import { Plus, Edit, Trash2, Phone, Mail, User, Eye } from 'lucide-react';
 import { ClientForm } from './ClientForm';
+import { ClientDetailsModal } from './ClientDetailsModal';
+import { UserFilter } from '../sales/UserFilter';
+import { WhatsAppButton } from '../integrations/WhatsAppButton';
 
 interface ClientsViewProps {
   clients: Client[];
@@ -14,24 +17,44 @@ interface ClientsViewProps {
 }
 
 export const ClientsView = ({ clients, setClients }: ClientsViewProps) => {
-  const { user } = useAuth();
+  const { user, isAdmin, isManager } = useAuth();
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingClient, setEditingClient] = useState<Client | null>(null);
+  const [viewingClient, setViewingClient] = useState<Client | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
 
-  const filteredClients = clients.filter(client =>
-    client.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    client.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    client.phone.includes(searchTerm)
-  );
+  // Filtrar clientes baseado no usuário selecionado e permissões
+  const filteredClients = useMemo(() => {
+    let clientsToShow = clients;
+
+    // Se não é admin nem manager, mostrar apenas próprios clientes
+    if (!isAdmin && !isManager) {
+      clientsToShow = clients.filter(client => client.userId === user?.id);
+    } else if (selectedUserId) {
+      // Se admin/manager selecionou um usuário específico
+      clientsToShow = clients.filter(client => client.userId === selectedUserId);
+    }
+    // Se admin/manager e não selecionou usuário, mostrar todos
+
+    // Aplicar filtro de busca
+    return clientsToShow.filter(client =>
+      client.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      client.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      client.phone.includes(searchTerm)
+    );
+  }, [clients, selectedUserId, searchTerm, isAdmin, isManager, user?.id]);
 
   const handleAddClient = async (clientData: Omit<Client, 'id' | 'userId' | 'createdAt' | 'updatedAt'>) => {
-    if (!user || !db) return;
+    if (!user || !db || !user.organizationId) return;
 
     try {
-      const docRef = await addDoc(collection(db, 'clients'), {
+      // Para admin/manager, permitir especificar userId, senão usar o próprio
+      const finalUserId = (isAdmin || isManager) && selectedUserId ? selectedUserId : user.id;
+      
+      const docRef = await addDoc(collection(db, `organizations/${user.organizationId}/clients`), {
         ...clientData,
-        userId: user.id,
+        userId: finalUserId,
         createdAt: new Date(),
         updatedAt: new Date(),
       });
@@ -39,7 +62,7 @@ export const ClientsView = ({ clients, setClients }: ClientsViewProps) => {
       const newClient: Client = {
         id: docRef.id,
         ...clientData,
-        userId: user.id,
+        userId: finalUserId,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
@@ -52,10 +75,10 @@ export const ClientsView = ({ clients, setClients }: ClientsViewProps) => {
   };
 
   const handleUpdateClient = async (clientData: Omit<Client, 'id' | 'userId' | 'createdAt' | 'updatedAt'>) => {
-    if (!editingClient || !db) return;
+    if (!editingClient || !db || !user?.organizationId) return;
 
     try {
-      await updateDoc(doc(db, 'clients', editingClient.id), {
+      await updateDoc(doc(db, `organizations/${user.organizationId}/clients`, editingClient.id), {
         ...clientData,
         updatedAt: new Date(),
       });
@@ -73,10 +96,10 @@ export const ClientsView = ({ clients, setClients }: ClientsViewProps) => {
   };
 
   const handleDeleteClient = async (clientId: string) => {
-    if (!confirm('Tem certeza que deseja excluir este cliente?') || !db) return;
+    if (!confirm('Tem certeza que deseja excluir este cliente?') || !db || !user?.organizationId) return;
 
     try {
-      await deleteDoc(doc(db, 'clients', clientId));
+      await deleteDoc(doc(db, `organizations/${user.organizationId}/clients`, clientId));
       setClients(clients.filter(client => client.id !== clientId));
     } catch (error) {
       console.error('Error deleting client:', error);
@@ -91,17 +114,35 @@ export const ClientsView = ({ clients, setClients }: ClientsViewProps) => {
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold text-gray-900">Clientes</h2>
-        <button
-          onClick={() => {
-            setEditingClient(null);
-            setIsFormOpen(true);
-          }}
-          className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center space-x-2 hover:bg-blue-700"
-        >
-          <Plus className="h-4 w-4" />
-          <span>Novo Cliente</span>
-        </button>
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900">Clientes</h2>
+          {(isAdmin || isManager) && (
+            <p className="text-gray-600 mt-1">
+              {selectedUserId 
+                ? `Visualizando clientes de um usuário específico`
+                : `Visualizando clientes de ${isAdmin ? 'toda a organização' : 'sua equipe'}`
+              }
+            </p>
+          )}
+        </div>
+        <div className="flex items-center space-x-4">
+          {(isAdmin || isManager) && (
+            <UserFilter 
+              selectedUserId={selectedUserId}
+              onUserChange={setSelectedUserId}
+            />
+          )}
+          <button
+            onClick={() => {
+              setEditingClient(null);
+              setIsFormOpen(true);
+            }}
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center space-x-2 hover:bg-blue-700"
+          >
+            <Plus className="h-4 w-4" />
+            <span>Novo Cliente</span>
+          </button>
+        </div>
       </div>
 
       <div className="mb-6">
@@ -112,6 +153,29 @@ export const ClientsView = ({ clients, setClients }: ClientsViewProps) => {
           onChange={(e) => setSearchTerm(e.target.value)}
           className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
         />
+      </div>
+
+      {/* Métricas */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="bg-white rounded-lg shadow p-4">
+          <div className="text-sm font-medium text-gray-600">Total de Clientes</div>
+          <div className="text-2xl font-bold text-gray-900">{filteredClients.length}</div>
+          {selectedUserId && (
+            <div className="text-xs text-gray-500 mt-1">
+              {clients.length} no total da organização
+            </div>
+          )}
+        </div>
+        <div className="bg-white rounded-lg shadow p-4">
+          <div className="text-sm font-medium text-gray-600">Segmentos Únicos</div>
+          <div className="text-2xl font-bold text-blue-600">
+            {new Set(filteredClients.map(c => c.segment)).size}
+          </div>
+        </div>
+        <div className="bg-white rounded-lg shadow p-4">
+          <div className="text-sm font-medium text-gray-600">Clientes Ativos</div>
+          <div className="text-2xl font-bold text-green-600">{filteredClients.length}</div>
+        </div>
       </div>
 
       <div className="bg-white rounded-lg shadow overflow-hidden">
@@ -160,6 +224,13 @@ export const ClientsView = ({ clients, setClients }: ClientsViewProps) => {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
                     <button
+                      onClick={() => setViewingClient(client)}
+                      className="text-gray-600 hover:text-gray-900"
+                      title="Ver Detalhes"
+                    >
+                      <Eye className="h-4 w-4" />
+                    </button>
+                    <button
                       onClick={() => openWhatsApp(client.phone)}
                       className="text-green-600 hover:text-green-900"
                       title="WhatsApp"
@@ -205,6 +276,18 @@ export const ClientsView = ({ clients, setClients }: ClientsViewProps) => {
           onClose={() => {
             setIsFormOpen(false);
             setEditingClient(null);
+          }}
+        />
+      )}
+
+      {viewingClient && (
+        <ClientDetailsModal
+          client={viewingClient}
+          onClose={() => setViewingClient(null)}
+          onEdit={() => {
+            setEditingClient(viewingClient);
+            setViewingClient(null);
+            setIsFormOpen(true);
           }}
         />
       )}

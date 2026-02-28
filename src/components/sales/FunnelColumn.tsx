@@ -12,7 +12,7 @@ interface FunnelColumnProps {
     name: string;
     color: string;
     order: number;
-    description: string;
+    description?: string;
   };
   deals: Deal[];
   clients: Client[];

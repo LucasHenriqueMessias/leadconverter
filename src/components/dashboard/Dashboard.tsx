@@ -1,8 +1,6 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { collection, query, where, getDocs } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
 import { useAuth } from '@/contexts/AuthContext';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
@@ -12,124 +10,43 @@ import { SalesFunnelView } from '../sales/SalesFunnelView';
 import { TasksView } from '../tasks/TasksView';
 import { QuotesView } from '../quotes/QuotesView';
 import { ReportsView } from '../reports/ReportsView';
-import { Client, Deal, Task, Quote } from '@/types';
-import { normalizeStage } from '@/utils/stageUtils';
+import { UsersView } from '../users/UsersView';
+import { CustomFieldsManager } from '../customFields/CustomFieldsManager';
+import { FunnelManager } from '../funnels/FunnelManager';
+import { ForecastReport } from '../reports/ForecastReport';
+import { TagsManager } from '../tags/TagsManager';
+import { LeadScoringView } from '../scoring/LeadScoringView';
 import { useNotifications, Notification } from '@/hooks/useNotifications';
+import { useRealtimeClients, useRealtimeDeals, useRealtimeTasks, useRealtimeQuotes } from '@/hooks/useRealtimeData';
 
-export type DashboardView = 'overview' | 'clients' | 'sales' | 'tasks' | 'quotes' | 'reports';
+export type DashboardView = 'overview' | 'clients' | 'sales' | 'tasks' | 'quotes' | 'reports' | 'users' | 'customFields' | 'funnels' | 'forecast' | 'tags' | 'scoring';
 
 export const Dashboard = () => {
   const { user } = useAuth();
   const [currentView, setCurrentView] = useState<DashboardView>('overview');
-  const [clients, setClients] = useState<Client[]>([]);
-  const [deals, setDeals] = useState<Deal[]>([]);
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [quotes, setQuotes] = useState<Quote[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Carregar dados
-  useEffect(() => {
-    const loadData = async () => {
-      if (!user || !db) return;
-
-      try {
-        // Carregar clientes
-        const clientsQuery = query(
-          collection(db, 'clients'),
-          where('userId', '==', user.id)
-        );
-        const clientsSnapshot = await getDocs(clientsQuery);
-        const clientsData = clientsSnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data(),
-          createdAt: doc.data().createdAt?.toDate(),
-          updatedAt: doc.data().updatedAt?.toDate(),
-        })) as Client[];
-
-        // Carregar deals
-        const dealsQuery = query(
-          collection(db, 'deals'),
-          where('userId', '==', user.id)
-        );
-        const dealsSnapshot = await getDocs(dealsQuery);
-        const dealsData = dealsSnapshot.docs.map(doc => {
-          const data = doc.data();
-          const originalStage = data.stage;
-          const normalizedStage = normalizeStage(originalStage);
-          
-          return {
-            id: doc.id,
-            ...data,
-            stage: normalizedStage,
-            expectedCloseDate: data.expectedCloseDate?.toDate(),
-            createdAt: data.createdAt?.toDate(),
-            updatedAt: data.updatedAt?.toDate(),
-          };
-        }) as Deal[];
-
-        // Atualizar deals com stages inválidos no Firebase
-        const dealsToUpdate = dealsSnapshot.docs.filter(doc => {
-          const originalStage = doc.data().stage;
-          const normalizedStage = normalizeStage(originalStage);
-          return originalStage !== normalizedStage;
-        });
-
-        if (dealsToUpdate.length > 0) {
-          console.log('Normalizing invalid deal stages:', dealsToUpdate.length);
-          
-          // Aqui normalmente faria as atualizações em batch, mas para simplicidade vou deixar comentado
-          // for (const dealDoc of dealsToUpdate) {
-          //   await updateDoc(doc(db, 'deals', dealDoc.id), {
-          //     stage: normalizeStage(dealDoc.data().stage),
-          //     updatedAt: new Date(),
-          //   });
-          // }
-        }
-
-        // Carregar tasks
-        const tasksQuery = query(
-          collection(db, 'tasks'),
-          where('userId', '==', user.id)
-        );
-        const tasksSnapshot = await getDocs(tasksQuery);
-        const tasksData = tasksSnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data(),
-          dueDate: doc.data().dueDate?.toDate(),
-          createdAt: doc.data().createdAt?.toDate(),
-          updatedAt: doc.data().updatedAt?.toDate(),
-        })) as Task[];
-
-        // Carregar quotes
-        const quotesQuery = query(
-          collection(db, 'quotes'),
-          where('userId', '==', user.id)
-        );
-        const quotesSnapshot = await getDocs(quotesQuery);
-        const quotesData = quotesSnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data(),
-          validUntil: doc.data().validUntil?.toDate(),
-          createdAt: doc.data().createdAt?.toDate(),
-          updatedAt: doc.data().updatedAt?.toDate(),
-        })) as Quote[];
-
-        setClients(clientsData);
-        setDeals(dealsData);
-        setTasks(tasksData);
-        setQuotes(quotesData);
-      } catch (error) {
-        console.error('Error loading data:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadData();
-  }, [user]);
+  // Usar hooks de tempo real para todos os dados
+  const { data: clients, setData: setClients } = useRealtimeClients();
+  const { data: deals, setData: setDeals } = useRealtimeDeals();
+  const { data: tasks, setData: setTasks } = useRealtimeTasks();
+  const { data: quotes, setData: setQuotes } = useRealtimeQuotes();
 
   // Hook de notificações
   const notifications = useNotifications({ tasks, quotes, deals });
+
+  // Controlar loading baseado nos hooks de tempo real
+  useEffect(() => {
+    // Considerar carregado quando pelo menos um dos hooks terminou de carregar
+    // ou quando não há organizationId (usuário não logado)
+    if (!user?.organizationId) {
+      setLoading(false);
+    } else {
+      // Aguardar um pouco para os hooks carregarem
+      const timer = setTimeout(() => setLoading(false), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [user?.organizationId]);
 
   const handleNotificationClick = (notification: Notification) => {
     // Navegar para a view correspondente ao tipo de notificação
@@ -160,6 +77,18 @@ export const Dashboard = () => {
         return <QuotesView quotes={quotes} setQuotes={setQuotes} clients={clients} />;
       case 'reports':
         return <ReportsView clients={clients} deals={deals} tasks={tasks} quotes={quotes} />;
+      case 'users':
+        return <UsersView />;
+      case 'customFields':
+        return <CustomFieldsManager />;
+      case 'funnels':
+        return <FunnelManager />;
+      case 'forecast':
+        return <ForecastReport deals={deals} />;
+      case 'tags':
+        return <TagsManager />;
+      case 'scoring':
+        return <LeadScoringView clients={clients} deals={deals} />;
       default:
         return <Overview clients={clients} deals={deals} tasks={tasks} quotes={quotes} />;
     }

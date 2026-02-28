@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { collection, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -18,13 +18,16 @@ import {
   XCircle,
   Clock
 } from 'lucide-react';
+import { UserFilter } from '../sales/UserFilter';
+import { CustomFieldRenderer } from '../customFields/CustomFieldRenderer';
 
 // Componente do formulário inline para evitar problemas de módulo
-const QuoteForm = ({ quote, clients, onSave, onClose }: {
+const QuoteForm = ({ quote, clients, onSave, onClose, organization }: {
   quote?: Quote | null;
   clients: Client[];
   onSave: (quoteData: Omit<Quote, 'id' | 'userId' | 'createdAt' | 'updatedAt'>) => void;
   onClose: () => void;
+  organization: any;
 }) => {
   const [formData, setFormData] = useState({
     title: '',
@@ -33,7 +36,13 @@ const QuoteForm = ({ quote, clients, onSave, onClose }: {
     validUntil: '',
     status: 'draft' as 'draft' | 'sent' | 'accepted' | 'rejected',
     items: [] as QuoteItem[],
+    customFields: {} as Record<string, any>,
   });
+
+  // Obter campos customizados para orçamentos
+  const customFields = (organization?.settings?.customFields?.filter(
+    (field: { entity: string }) => field.entity === 'quote'
+  ) || []) as Array<{ id: string; name: string; type: 'text' | 'number' | 'date' | 'select' | 'multiselect'; required: boolean; options?: string[]; entity: 'client' | 'deal' | 'task' | 'quote' }>;
 
   useEffect(() => {
     if (quote) {
@@ -44,6 +53,7 @@ const QuoteForm = ({ quote, clients, onSave, onClose }: {
         validUntil: new Date(quote.validUntil).toISOString().slice(0, 10),
         status: quote.status,
         items: quote.items || [],
+        customFields: quote.customFields || {},
       });
     }
   }, [quote]);
@@ -85,6 +95,16 @@ const QuoteForm = ({ quote, clients, onSave, onClose }: {
     return formData.items.reduce((sum, item) => sum + item.total, 0);
   };
 
+  const handleCustomFieldChange = (fieldId: string, value: any) => {
+    setFormData(prev => ({
+      ...prev,
+      customFields: {
+        ...prev.customFields,
+        [fieldId]: value,
+      },
+    }));
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -99,12 +119,14 @@ const QuoteForm = ({ quote, clients, onSave, onClose }: {
     }
 
     onSave({
+      organizationId: organization?.id || '',
       title: formData.title.trim(),
       description: formData.description.trim(),
       clientId: formData.clientId,
       validUntil: new Date(formData.validUntil),
       status: formData.status,
       items: formData.items,
+      customFields: formData.customFields,
       total: calculateTotal(),
     });
   };
@@ -297,6 +319,25 @@ const QuoteForm = ({ quote, clients, onSave, onClose }: {
             </div>
           </div>
 
+          {/* Campos Customizados */}
+          {customFields.length > 0 && (
+            <div className="pt-4 border-t border-gray-200">
+              <h4 className="text-sm font-semibold text-gray-900 mb-4">
+                Informações Adicionais
+              </h4>
+              <div className="space-y-4">
+                {customFields.map((field) => (
+                  <CustomFieldRenderer
+                    key={field.id}
+                    field={field}
+                    value={formData.customFields[field.id]}
+                    onChange={(value) => handleCustomFieldChange(field.id, value)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Botões */}
           <div className="flex justify-end space-x-3 pt-6">
             <button
@@ -326,18 +367,41 @@ interface QuotesViewProps {
 }
 
 export const QuotesView = ({ quotes, setQuotes, clients }: QuotesViewProps) => {
-  const { user } = useAuth();
+  const { user, isAdmin, isManager, organization } = useAuth();
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingQuote, setEditingQuote] = useState<Quote | null>(null);
   const [filterStatus, setFilterStatus] = useState<'all' | 'draft' | 'sent' | 'accepted' | 'rejected'>('all');
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+
+  // Filtrar orçamentos baseado no usuário selecionado e permissões
+  const filteredQuotes = useMemo(() => {
+    let quotesToShow = quotes;
+
+    // Se não é admin nem manager, mostrar apenas próprios orçamentos
+    if (!isAdmin && !isManager) {
+      quotesToShow = quotes.filter(quote => quote.userId === user?.id);
+    } else if (selectedUserId) {
+      // Se admin/manager selecionou um usuário específico
+      quotesToShow = quotes.filter(quote => quote.userId === selectedUserId);
+    }
+    // Se admin/manager e não selecionou usuário, mostrar todos
+
+    // Aplicar filtro de status
+    return quotesToShow.filter(quote => {
+      return filterStatus === 'all' || quote.status === filterStatus;
+    });
+  }, [quotes, selectedUserId, filterStatus, isAdmin, isManager, user?.id]);
 
   const handleAddQuote = async (quoteData: Omit<Quote, 'id' | 'userId' | 'createdAt' | 'updatedAt'>) => {
     if (!user || !db) return;
 
     try {
-      const docRef = await addDoc(collection(db, 'quotes'), {
+      // Para admin/manager, permitir especificar userId, senão usar o próprio
+      const finalUserId = (isAdmin || isManager) && selectedUserId ? selectedUserId : user.id;
+      
+      const docRef = await addDoc(collection(db, `organizations/${user.organizationId}/quotes`), {
         ...quoteData,
-        userId: user.id,
+        userId: finalUserId,
         createdAt: new Date(),
         updatedAt: new Date(),
       });
@@ -345,7 +409,7 @@ export const QuotesView = ({ quotes, setQuotes, clients }: QuotesViewProps) => {
       const newQuote: Quote = {
         id: docRef.id,
         ...quoteData,
-        userId: user.id,
+        userId: finalUserId,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
@@ -358,10 +422,10 @@ export const QuotesView = ({ quotes, setQuotes, clients }: QuotesViewProps) => {
   };
 
   const handleUpdateQuote = async (quoteData: Omit<Quote, 'id' | 'userId' | 'createdAt' | 'updatedAt'>) => {
-    if (!editingQuote || !db) return;
+    if (!editingQuote || !db || !user?.organizationId) return;
 
     try {
-      await updateDoc(doc(db, 'quotes', editingQuote.id), {
+      await updateDoc(doc(db, `organizations/${user.organizationId}/quotes`, editingQuote.id), {
         ...quoteData,
         updatedAt: new Date(),
       });
@@ -379,10 +443,10 @@ export const QuotesView = ({ quotes, setQuotes, clients }: QuotesViewProps) => {
   };
 
   const handleDeleteQuote = async (quoteId: string) => {
-    if (!confirm('Tem certeza que deseja excluir este orçamento?') || !db) return;
+    if (!confirm('Tem certeza que deseja excluir este orçamento?') || !db || !user?.organizationId) return;
 
     try {
-      await deleteDoc(doc(db, 'quotes', quoteId));
+      await deleteDoc(doc(db, `organizations/${user.organizationId}/quotes`, quoteId));
       setQuotes(quotes.filter(quote => quote.id !== quoteId));
     } catch (error) {
       console.error('Error deleting quote:', error);
@@ -390,10 +454,10 @@ export const QuotesView = ({ quotes, setQuotes, clients }: QuotesViewProps) => {
   };
 
   const handleStatusChange = async (quote: Quote, newStatus: Quote['status']) => {
-    if (!db) return;
+    if (!db || !user?.organizationId) return;
 
     try {
-      await updateDoc(doc(db, 'quotes', quote.id), {
+      await updateDoc(doc(db, `organizations/${user.organizationId}/quotes`, quote.id), {
         status: newStatus,
         updatedAt: new Date(),
       });
@@ -417,16 +481,6 @@ export const QuotesView = ({ quotes, setQuotes, clients }: QuotesViewProps) => {
     setEditingQuote(quote);
     setIsFormOpen(true);
   };
-
-  // Filtrar orçamentos
-  const filteredQuotes = quotes.filter(quote => {
-    return filterStatus === 'all' || quote.status === filterStatus;
-  });
-
-  // Organizar por data de criação (mais recentes primeiro)
-  const sortedQuotes = filteredQuotes.sort((a, b) => {
-    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-  });
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -458,29 +512,57 @@ export const QuotesView = ({ quotes, setQuotes, clients }: QuotesViewProps) => {
     }
   };
 
-  const draftQuotes = quotes.filter(q => q.status === 'draft');
-  const sentQuotes = quotes.filter(q => q.status === 'sent');
-  const acceptedQuotes = quotes.filter(q => q.status === 'accepted');
+  // Organizar por data de criação (mais recentes primeiro)
+  const sortedQuotes = filteredQuotes.sort((a, b) => {
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+  });
+
+  const draftQuotes = filteredQuotes.filter(q => q.status === 'draft');
+  const sentQuotes = filteredQuotes.filter(q => q.status === 'sent');
+  const acceptedQuotes = filteredQuotes.filter(q => q.status === 'accepted');
   const totalValue = acceptedQuotes.reduce((sum, quote) => sum + quote.total, 0);
 
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold text-gray-900">Orçamentos</h2>
-        <button
-          onClick={openAddForm}
-          className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center space-x-2 hover:bg-blue-700"
-        >
-          <Plus className="h-4 w-4" />
-          <span>Novo Orçamento</span>
-        </button>
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900">Orçamentos</h2>
+          {(isAdmin || isManager) && (
+            <p className="text-gray-600 mt-1">
+              {selectedUserId 
+                ? `Visualizando orçamentos de um usuário específico`
+                : `Visualizando orçamentos de ${isAdmin ? 'toda a organização' : 'sua equipe'}`
+              }
+            </p>
+          )}
+        </div>
+        <div className="flex items-center space-x-4">
+          {(isAdmin || isManager) && (
+            <UserFilter 
+              selectedUserId={selectedUserId}
+              onUserChange={setSelectedUserId}
+            />
+          )}
+          <button
+            onClick={openAddForm}
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center space-x-2 hover:bg-blue-700"
+          >
+            <Plus className="h-4 w-4" />
+            <span>Novo Orçamento</span>
+          </button>
+        </div>
       </div>
 
       {/* Métricas */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-white rounded-lg shadow p-4">
           <div className="text-sm font-medium text-gray-600">Total de Orçamentos</div>
-          <div className="text-2xl font-bold text-gray-900">{quotes.length}</div>
+          <div className="text-2xl font-bold text-gray-900">{filteredQuotes.length}</div>
+          {selectedUserId && (
+            <div className="text-xs text-gray-500 mt-1">
+              {quotes.length} no total da organização
+            </div>
+          )}
         </div>
         <div className="bg-white rounded-lg shadow p-4">
           <div className="text-sm font-medium text-gray-600">Rascunhos</div>
@@ -648,6 +730,7 @@ export const QuotesView = ({ quotes, setQuotes, clients }: QuotesViewProps) => {
             setIsFormOpen(false);
             setEditingQuote(null);
           }}
+          organization={organization}
         />
       )}
     </div>

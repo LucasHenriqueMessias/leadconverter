@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { collection, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -23,6 +23,7 @@ import {
   Flag,
   Tag
 } from 'lucide-react';
+import { UserFilter } from '../sales/UserFilter';
 
 interface TaskFormProps {
   task?: Task | null;
@@ -305,16 +306,45 @@ interface TasksViewProps {
 }
 
 export const TasksView = ({ tasks, setTasks, clients, deals }: TasksViewProps) => {
-  const { user } = useAuth();
+  const { user, isAdmin, isManager } = useAuth();
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'completed'>('all');
   const [filterPriority, setFilterPriority] = useState<'all' | 'low' | 'medium' | 'high'>('all');
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+
+  // Filtrar tarefas baseado no usuário selecionado e permissões
+  const filteredTasks = useMemo(() => {
+    let tasksToShow = tasks;
+
+    // Se não é admin nem manager, mostrar apenas próprias tarefas
+    if (!isAdmin && !isManager) {
+      tasksToShow = tasks.filter(task => task.userId === user?.id);
+    } else if (selectedUserId) {
+      // Se admin/manager selecionou um usuário específico
+      tasksToShow = tasks.filter(task => task.userId === selectedUserId);
+    }
+    // Se admin/manager e não selecionou usuário, mostrar todas
+
+    // Aplicar filtros de status e prioridade
+    return tasksToShow.filter(task => {
+      const statusMatch = filterStatus === 'all' || 
+        (filterStatus === 'pending' && !task.completed) ||
+        (filterStatus === 'completed' && task.completed);
+      
+      const priorityMatch = filterPriority === 'all' || task.priority === filterPriority;
+      
+      return statusMatch && priorityMatch;
+    });
+  }, [tasks, selectedUserId, filterStatus, filterPriority, isAdmin, isManager, user?.id]);
 
   const handleAddTask = async (taskData: Omit<Task, 'id' | 'userId' | 'createdAt' | 'updatedAt'>) => {
     if (!user || !db) return;
 
     try {
+      // Para admin/manager, permitir especificar userId, senão usar o próprio
+      const finalUserId = (isAdmin || isManager) && selectedUserId ? selectedUserId : user.id;
+      
       // Remover campos undefined antes de salvar
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const cleanTaskData: any = {
@@ -324,7 +354,8 @@ export const TasksView = ({ tasks, setTasks, clients, deals }: TasksViewProps) =
         completed: taskData.completed,
         priority: taskData.priority,
         type: taskData.type,
-        userId: user.id,
+        customFields: taskData.customFields || {},
+        userId: finalUserId,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
@@ -339,12 +370,13 @@ export const TasksView = ({ tasks, setTasks, clients, deals }: TasksViewProps) =
         cleanTaskData.dealId = taskData.dealId;
       }
 
-      const docRef = await addDoc(collection(db, 'tasks'), cleanTaskData);
+      const docRef = await addDoc(collection(db, `organizations/${user.organizationId}/tasks`), cleanTaskData);
 
       const newTask: Task = {
         id: docRef.id,
         ...taskData,
-        userId: user.id,
+        userId: finalUserId,
+        customFields: taskData.customFields || {},
         createdAt: new Date(),
         updatedAt: new Date(),
       };
@@ -357,7 +389,7 @@ export const TasksView = ({ tasks, setTasks, clients, deals }: TasksViewProps) =
   };
 
   const handleUpdateTask = async (taskData: Omit<Task, 'id' | 'userId' | 'createdAt' | 'updatedAt'>) => {
-    if (!editingTask || !db) return;
+    if (!editingTask || !db || !user?.organizationId) return;
 
     try {
       // Remover campos undefined antes de atualizar
@@ -369,6 +401,7 @@ export const TasksView = ({ tasks, setTasks, clients, deals }: TasksViewProps) =
         completed: taskData.completed,
         priority: taskData.priority,
         type: taskData.type,
+        customFields: taskData.customFields || {},
         updatedAt: new Date(),
       };
 
@@ -382,7 +415,7 @@ export const TasksView = ({ tasks, setTasks, clients, deals }: TasksViewProps) =
         cleanUpdateData.dealId = taskData.dealId;
       }
 
-      await updateDoc(doc(db, 'tasks', editingTask.id), cleanUpdateData);
+      await updateDoc(doc(db, `organizations/${user.organizationId}/tasks`, editingTask.id), cleanUpdateData);
 
       setTasks(tasks.map(task =>
         task.id === editingTask.id
@@ -397,10 +430,10 @@ export const TasksView = ({ tasks, setTasks, clients, deals }: TasksViewProps) =
   };
 
   const handleDeleteTask = async (taskId: string) => {
-    if (!confirm('Tem certeza que deseja excluir esta tarefa?') || !db) return;
+    if (!confirm('Tem certeza que deseja excluir esta tarefa?') || !db || !user?.organizationId) return;
 
     try {
-      await deleteDoc(doc(db, 'tasks', taskId));
+      await deleteDoc(doc(db, `organizations/${user.organizationId}/tasks`, taskId));
       setTasks(tasks.filter(task => task.id !== taskId));
     } catch (error) {
       console.error('Error deleting task:', error);
@@ -408,12 +441,12 @@ export const TasksView = ({ tasks, setTasks, clients, deals }: TasksViewProps) =
   };
 
   const handleToggleComplete = async (task: Task) => {
-    if (!db) return;
+    if (!db || !user?.organizationId) return;
 
     try {
       const updatedTask = { ...task, completed: !task.completed, updatedAt: new Date() };
       
-      await updateDoc(doc(db, 'tasks', task.id), {
+      await updateDoc(doc(db, `organizations/${user.organizationId}/tasks`, task.id), {
         completed: !task.completed,
         updatedAt: new Date(),
       });
@@ -433,17 +466,6 @@ export const TasksView = ({ tasks, setTasks, clients, deals }: TasksViewProps) =
     setEditingTask(task);
     setIsFormOpen(true);
   };
-
-  // Filtrar tarefas
-  const filteredTasks = tasks.filter(task => {
-    const statusMatch = filterStatus === 'all' || 
-      (filterStatus === 'pending' && !task.completed) ||
-      (filterStatus === 'completed' && task.completed);
-    
-    const priorityMatch = filterPriority === 'all' || task.priority === filterPriority;
-    
-    return statusMatch && priorityMatch;
-  });
 
   // Organizar por data de vencimento
   const sortedTasks = filteredTasks.sort((a, b) => {
@@ -490,40 +512,59 @@ export const TasksView = ({ tasks, setTasks, clients, deals }: TasksViewProps) =
     }
   };
 
-  const pendingTasks = tasks.filter(task => !task.completed);
-  const completedTasks = tasks.filter(task => task.completed);
-  const overdueTasks = pendingTasks.filter(task => new Date(task.dueDate) < new Date());
-
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold text-gray-900">Tarefas</h2>
-        <button
-          onClick={openAddForm}
-          className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center space-x-2 hover:bg-blue-700"
-        >
-          <Plus className="h-4 w-4" />
-          <span>Nova Tarefa</span>
-        </button>
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900">Tarefas</h2>
+          {(isAdmin || isManager) && (
+            <p className="text-gray-600 mt-1">
+              {selectedUserId 
+                ? `Visualizando tarefas de um usuário específico`
+                : `Visualizando tarefas de ${isAdmin ? 'toda a organização' : 'sua equipe'}`
+              }
+            </p>
+          )}
+        </div>
+        <div className="flex items-center space-x-4">
+          {(isAdmin || isManager) && (
+            <UserFilter 
+              selectedUserId={selectedUserId}
+              onUserChange={setSelectedUserId}
+            />
+          )}
+          <button
+            onClick={openAddForm}
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center space-x-2 hover:bg-blue-700"
+          >
+            <Plus className="h-4 w-4" />
+            <span>Nova Tarefa</span>
+          </button>
+        </div>
       </div>
 
       {/* Métricas */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-white rounded-lg shadow p-4">
           <div className="text-sm font-medium text-gray-600">Total de Tarefas</div>
-          <div className="text-2xl font-bold text-gray-900">{tasks.length}</div>
+          <div className="text-2xl font-bold text-gray-900">{filteredTasks.length}</div>
+          {selectedUserId && (
+            <div className="text-xs text-gray-500 mt-1">
+              {tasks.length} no total da organização
+            </div>
+          )}
         </div>
         <div className="bg-white rounded-lg shadow p-4">
           <div className="text-sm font-medium text-gray-600">Pendentes</div>
-          <div className="text-2xl font-bold text-blue-600">{pendingTasks.length}</div>
+          <div className="text-2xl font-bold text-blue-600">{filteredTasks.filter(task => !task.completed).length}</div>
         </div>
         <div className="bg-white rounded-lg shadow p-4">
           <div className="text-sm font-medium text-gray-600">Concluídas</div>
-          <div className="text-2xl font-bold text-green-600">{completedTasks.length}</div>
+          <div className="text-2xl font-bold text-green-600">{filteredTasks.filter(task => task.completed).length}</div>
         </div>
         <div className="bg-white rounded-lg shadow p-4">
           <div className="text-sm font-medium text-gray-600">Atrasadas</div>
-          <div className="text-2xl font-bold text-red-600">{overdueTasks.length}</div>
+          <div className="text-2xl font-bold text-red-600">{filteredTasks.filter(task => !task.completed && new Date(task.dueDate) < new Date()).length}</div>
         </div>
       </div>
 

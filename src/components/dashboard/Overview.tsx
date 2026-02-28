@@ -1,15 +1,20 @@
 'use client';
 
 import { Client, Deal, Task, Quote } from '@/types';
+import { useAuth } from '@/contexts/AuthContext';
+import { getDataScope } from '@/lib/permissions';
 import { 
   Users, 
   Target, 
-  CheckSquare, 
   FileText, 
   DollarSign, 
   TrendingUp,
-  AlertCircle 
+  AlertCircle,
+  Award,
+  Clock,
+  Building
 } from 'lucide-react';
+import { formatDate } from '@/utils/dateUtils';
 
 interface OverviewProps {
   clients: Client[];
@@ -19,6 +24,10 @@ interface OverviewProps {
 }
 
 export const Overview = ({ clients, deals, tasks, quotes }: OverviewProps) => {
+  const { user, organization, isAdmin, isManager } = useAuth();
+
+  if (!user) return null;
+
   // Função para calcular variação percentual entre períodos
   const calculatePercentageChange = (current: number, previous: number): { percentage: number, isPositive: boolean } => {
     if (previous === 0) {
@@ -33,33 +42,54 @@ export const Overview = ({ clients, deals, tasks, quotes }: OverviewProps) => {
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
   const sixtyDaysAgo = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
 
+  // Filtrar dados baseado no scope do usuário
+  const { scope } = getDataScope(user.role, user.id, user.teamId);
+  
+  let filteredClients = clients;
+  let filteredDeals = deals;
+  let filteredTasks = tasks;
+  let filteredQuotes = quotes;
+
+  if (scope === 'own') {
+    filteredClients = clients.filter(c => c.userId === user.id);
+    filteredDeals = deals.filter(d => d.userId === user.id);
+    filteredTasks = tasks.filter(t => t.userId === user.id);
+    filteredQuotes = quotes.filter(q => q.userId === user.id);
+  } else if (scope === 'team' && user.teamId) {
+    // Para managers, mostrar dados da equipe
+    filteredClients = clients.filter(c => c.userId === user.id || ('teamId' in c && c.teamId === user.teamId));
+    filteredDeals = deals.filter(d => d.userId === user.id || ('teamId' in d && d.teamId === user.teamId));
+    filteredTasks = tasks.filter(t => t.userId === user.id || ('teamId' in t && t.teamId === user.teamId));
+    filteredQuotes = quotes.filter(q => q.userId === user.id || ('teamId' in q && q.teamId === user.teamId));
+  }
+
   // Dados do período atual (últimos 30 dias)
-  const currentPeriodClients = clients.filter(client => 
+  const currentPeriodClients = filteredClients.filter(client => 
     new Date(client.createdAt) >= thirtyDaysAgo
   ).length;
 
-  const currentPeriodDeals = deals.filter(deal => 
+  const currentPeriodDeals = filteredDeals.filter(deal => 
     new Date(deal.createdAt) >= thirtyDaysAgo && 
     deal.stage !== 'closed-won' && deal.stage !== 'closed-lost'
   ).length;
 
-  const currentPeriodTasks = tasks.filter(task => 
+  const currentPeriodTasks = filteredTasks.filter(task => 
     new Date(task.createdAt) >= thirtyDaysAgo && 
     !task.completed && new Date(task.dueDate) <= now
   ).length;
 
-  const currentPeriodQuotes = quotes.filter(quote => 
+  const currentPeriodQuotes = filteredQuotes.filter(quote => 
     new Date(quote.createdAt) >= thirtyDaysAgo && 
     quote.status === 'sent'
   ).length;
 
-  const currentPeriodRevenue = deals
+  const currentPeriodRevenue = filteredDeals
     .filter(deal => 
       deal.stage === 'closed-won' && 
       new Date(deal.createdAt) >= thirtyDaysAgo
     )
     .reduce((sum, deal) => sum + deal.value, 0) + 
-    quotes
+    filteredQuotes
       .filter(quote => 
         quote.status === 'accepted' && 
         new Date(quote.createdAt) >= thirtyDaysAgo
@@ -67,37 +97,37 @@ export const Overview = ({ clients, deals, tasks, quotes }: OverviewProps) => {
       .reduce((sum, quote) => sum + quote.total, 0);
 
   // Dados do período anterior (30-60 dias atrás)
-  const previousPeriodClients = clients.filter(client => {
+  const previousPeriodClients = filteredClients.filter(client => {
     const clientDate = new Date(client.createdAt);
     return clientDate >= sixtyDaysAgo && clientDate < thirtyDaysAgo;
   }).length;
 
-  const previousPeriodDeals = deals.filter(deal => {
+  const previousPeriodDeals = filteredDeals.filter(deal => {
     const dealDate = new Date(deal.createdAt);
     return dealDate >= sixtyDaysAgo && dealDate < thirtyDaysAgo && 
            deal.stage !== 'closed-won' && deal.stage !== 'closed-lost';
   }).length;
 
-  const previousPeriodTasks = tasks.filter(task => {
+  const previousPeriodTasks = filteredTasks.filter(task => {
     const taskDate = new Date(task.createdAt);
     return taskDate >= sixtyDaysAgo && taskDate < thirtyDaysAgo && 
            !task.completed && new Date(task.dueDate) <= now;
   }).length;
 
-  const previousPeriodQuotes = quotes.filter(quote => {
+  const previousPeriodQuotes = filteredQuotes.filter(quote => {
     const quoteDate = new Date(quote.createdAt);
     return quoteDate >= sixtyDaysAgo && quoteDate < thirtyDaysAgo && 
            quote.status === 'sent';
   }).length;
 
-  const previousPeriodRevenue = deals
+  const previousPeriodRevenue = filteredDeals
     .filter(deal => {
       const dealDate = new Date(deal.createdAt);
       return deal.stage === 'closed-won' && 
              dealDate >= sixtyDaysAgo && dealDate < thirtyDaysAgo;
     })
     .reduce((sum, deal) => sum + deal.value, 0) + 
-    quotes
+    filteredQuotes
       .filter(quote => {
         const quoteDate = new Date(quote.createdAt);
         return quote.status === 'accepted' && 
@@ -113,26 +143,49 @@ export const Overview = ({ clients, deals, tasks, quotes }: OverviewProps) => {
   const revenueChange = calculatePercentageChange(currentPeriodRevenue, previousPeriodRevenue);
 
   // Dados atuais totais
-  const totalRevenue = deals
+  const totalRevenue = filteredDeals
     .filter(deal => deal.stage === 'closed-won')
     .reduce((sum, deal) => sum + deal.value, 0);
 
-  const pendingTasks = tasks.filter(task => 
+  const pendingTasks = filteredTasks.filter(task => 
     !task.completed && new Date(task.dueDate) <= new Date()
   ).length;
 
-  const activeDeals = deals.filter(deal => 
+  const activeDeals = filteredDeals.filter(deal => 
     deal.stage !== 'closed-won' && deal.stage !== 'closed-lost'
   ).length;
 
-  const acceptedQuotes = quotes.filter(quote => quote.status === 'accepted');
+  const acceptedQuotes = filteredQuotes.filter(quote => quote.status === 'accepted');
   const quotesRevenue = acceptedQuotes.reduce((sum, quote) => sum + quote.total, 0);
-  const pendingQuotes = quotes.filter(quote => quote.status === 'sent').length;
+  const pendingQuotes = filteredQuotes.filter(quote => quote.status === 'sent').length;
+
+  const getGreeting = () => {
+    const hour = new Date().getHours();
+    if (hour < 12) return 'Bom dia';
+    if (hour < 18) return 'Boa tarde';
+    return 'Boa noite';
+  };
+
+  const getScopeLabel = () => {
+    if (isAdmin) return 'da organização';
+    if (isManager) return 'da sua equipe';
+    return 'seus';
+  };
+
+  const getRoleLabel = () => {
+    switch (user.role) {
+      case 'admin': return 'Administrador';
+      case 'manager': return 'Gerente';
+      case 'sales': return 'Vendedor';
+      case 'viewer': return 'Visualizador';
+      default: return user.role;
+    }
+  };
 
   const stats = [
     {
       title: 'Total de Clientes',
-      value: clients.length,
+      value: filteredClients.length,
       icon: Users,
       color: 'bg-blue-500',
       change: clientsChange,
@@ -172,22 +225,50 @@ export const Overview = ({ clients, deals, tasks, quotes }: OverviewProps) => {
     },
   ];
 
-  const recentTasks = tasks
+  const recentTasks = filteredTasks
     .filter(task => !task.completed)
     .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime())
     .slice(0, 5);
 
-  const recentDeals = deals
+  const recentDeals = filteredDeals
     .filter(deal => deal.stage !== 'closed-won' && deal.stage !== 'closed-lost')
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, 5);
 
-  const recentQuotes = quotes
+  const recentQuotes = filteredQuotes
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, 5);
 
   return (
     <div className="space-y-6">
+      {/* Header personalizado */}
+      <div className="bg-gradient-to-r from-blue-600 to-blue-800 rounded-lg shadow p-6 text-white">
+        <div className="flex justify-between items-center">
+          <div>
+            <h1 className="text-2xl font-bold">
+              {getGreeting()}, {user.name}!
+            </h1>
+            <p className="text-blue-100 mt-1">
+              Aqui está um resumo {getScopeLabel()} dados de hoje
+            </p>
+          </div>
+          <div className="text-right">
+            <div className="flex items-center text-sm text-blue-100 mb-1">
+              <Building className="h-4 w-4 mr-1" />
+              {organization?.name || 'Organização'}
+            </div>
+            <div className="text-xs text-blue-200">
+              {getRoleLabel()}
+            </div>
+            {(isAdmin || isManager) && (
+              <div className="text-xs text-blue-300 mt-1">
+                Visualizando: {scope === 'organization' ? 'Toda organização' : scope === 'team' ? 'Sua equipe' : 'Seus dados'}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
       <div>
         <h2 className="text-2xl font-bold text-gray-900 mb-6">Visão Geral</h2>
         
@@ -264,7 +345,7 @@ export const Overview = ({ clients, deals, tasks, quotes }: OverviewProps) => {
         <div className="bg-white rounded-lg shadow">
           <div className="p-6 border-b border-gray-200">
             <h3 className="text-lg font-semibold text-gray-900 flex items-center">
-              <CheckSquare className="h-5 w-5 mr-2 text-blue-600" />
+              <Clock className="h-5 w-5 mr-2 text-blue-600" />
               Próximas Tarefas
             </h3>
           </div>
@@ -281,7 +362,7 @@ export const Overview = ({ clients, deals, tasks, quotes }: OverviewProps) => {
                     </div>
                     <div className="text-right">
                       <p className="text-sm font-medium text-gray-900">
-                        {new Date(task.dueDate).toLocaleDateString('pt-BR')}
+                        {formatDate(task.dueDate)}
                       </p>
                       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
                         task.priority === 'high' 
@@ -304,7 +385,7 @@ export const Overview = ({ clients, deals, tasks, quotes }: OverviewProps) => {
         <div className="bg-white rounded-lg shadow">
           <div className="p-6 border-b border-gray-200">
             <h3 className="text-lg font-semibold text-gray-900 flex items-center">
-              <Target className="h-5 w-5 mr-2 text-green-600" />
+              <Award className="h-5 w-5 mr-2 text-green-600" />
               Negócios Ativos
             </h3>
           </div>
@@ -314,7 +395,7 @@ export const Overview = ({ clients, deals, tasks, quotes }: OverviewProps) => {
             ) : (
               <div className="space-y-4">
                 {recentDeals.map((deal) => {
-                  const client = clients.find(c => c.id === deal.clientId);
+                  const client = filteredClients.find(c => c.id === deal.clientId);
                   return (
                     <div key={deal.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                       <div className="flex-1">
@@ -351,7 +432,7 @@ export const Overview = ({ clients, deals, tasks, quotes }: OverviewProps) => {
             ) : (
               <div className="space-y-4">
                 {recentQuotes.map((quote) => {
-                  const client = clients.find(c => c.id === quote.clientId);
+                  const client = filteredClients.find(c => c.id === quote.clientId);
                   const getStatusColor = (status: string) => {
                     switch (status) {
                       case 'draft': return 'bg-gray-100 text-gray-800';

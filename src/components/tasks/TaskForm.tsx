@@ -3,6 +3,8 @@
 import { useState, useEffect } from 'react';
 import { Task, Client, Deal } from '@/types';
 import { X, Calendar, User, FileText, Flag, Tag } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+import { CustomFieldRenderer } from '@/components/customFields/CustomFieldRenderer';
 
 interface TaskFormProps {
   task?: Task | null;
@@ -13,6 +15,7 @@ interface TaskFormProps {
 }
 
 export const TaskForm = ({ task, clients, deals, onSave, onClose }: TaskFormProps) => {
+  const { organization, user } = useAuth();
   const [formData, setFormData] = useState({
     title: '',
     description: '',
@@ -22,7 +25,13 @@ export const TaskForm = ({ task, clients, deals, onSave, onClose }: TaskFormProp
     clientId: '',
     dealId: '',
     completed: false,
+    customFields: {} as Record<string, any>,
   });
+
+  // Obter campos customizados para tarefas
+  const customFields = organization?.settings?.customFields?.filter(
+    field => field.entity === 'task'
+  ) || [];
 
   useEffect(() => {
     if (task) {
@@ -35,6 +44,7 @@ export const TaskForm = ({ task, clients, deals, onSave, onClose }: TaskFormProp
         clientId: task.clientId || '',
         dealId: task.dealId || '',
         completed: task.completed,
+        customFields: task.customFields || {},
       });
     }
   }, [task]);
@@ -47,7 +57,13 @@ export const TaskForm = ({ task, clients, deals, onSave, onClose }: TaskFormProp
       return;
     }
 
+    if (!user?.organizationId) {
+      alert('Erro: Organização não encontrada.');
+      return;
+    }
+
     onSave({
+      organizationId: user.organizationId,
       title: formData.title.trim(),
       description: formData.description.trim(),
       dueDate: new Date(formData.dueDate),
@@ -56,6 +72,7 @@ export const TaskForm = ({ task, clients, deals, onSave, onClose }: TaskFormProp
       clientId: formData.clientId || undefined,
       dealId: formData.dealId || undefined,
       completed: formData.completed,
+      customFields: formData.customFields,
     });
   };
 
@@ -64,6 +81,16 @@ export const TaskForm = ({ task, clients, deals, onSave, onClose }: TaskFormProp
       ...prev,
       clientId,
       dealId: '' // Reset deal when client changes
+    }));
+  };
+
+  const handleCustomFieldChange = (fieldId: string, value: any) => {
+    setFormData(prev => ({
+      ...prev,
+      customFields: {
+        ...prev.customFields,
+        [fieldId]: value,
+      },
     }));
   };
 
@@ -240,6 +267,25 @@ export const TaskForm = ({ task, clients, deals, onSave, onClose }: TaskFormProp
                   Tarefa concluída
                 </span>
               </label>
+            </div>
+          )}
+
+          {/* Campos Customizados */}
+          {customFields.length > 0 && (
+            <div className="pt-4 border-t border-gray-200">
+              <h4 className="text-sm font-semibold text-gray-900 mb-4">
+                Informações Adicionais
+              </h4>
+              <div className="space-y-4">
+                {customFields.map((field) => (
+                  <CustomFieldRenderer
+                    key={field.id}
+                    field={field}
+                    value={formData.customFields[field.id]}
+                    onChange={(value) => handleCustomFieldChange(field.id, value)}
+                  />
+                ))}
+              </div>
             </div>
           )}
 

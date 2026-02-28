@@ -1,35 +1,82 @@
 'use client';
 
-import { useState } from 'react';
-import { Deal, Client } from '@/types';
-import { X } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
+import { useAuth } from '@/contexts/AuthContext';
+import { Deal, Client, User } from '@/types';
+import { X, User as UserIcon } from 'lucide-react';
 import { DEFAULT_STAGES } from '@/constants/salesFunnel';
+import { CustomFieldRenderer } from '@/components/customFields/CustomFieldRenderer';
 
 interface DealFormProps {
   deal: Deal | null;
   clients: Client[];
   initialStage?: string;
-  onSubmit: (dealData: Omit<Deal, 'id' | 'userId' | 'createdAt' | 'updatedAt'>) => void;
+  onSubmit: (dealData: Omit<Deal, 'id' | 'createdAt' | 'updatedAt'>) => void;
   onClose: () => void;
 }
 
 export const DealForm = ({ deal, clients, initialStage, onSubmit, onClose }: DealFormProps) => {
+  const { user: currentUser, isAdmin, isManager, organization } = useAuth();
+  const [users, setUsers] = useState<User[]>([]);
   const [formData, setFormData] = useState({
     clientId: deal?.clientId || '',
+    userId: deal?.userId || currentUser?.id || '',
     title: deal?.title || '',
     value: deal?.value || 0,
     stage: deal?.stage || initialStage || 'lead',
     probability: deal?.probability || 50,
+    funnelId: deal?.funnelId || 'funnel_inbound',
     expectedCloseDate: deal?.expectedCloseDate 
       ? new Date(deal.expectedCloseDate).toISOString().split('T')[0]
       : new Date().toISOString().split('T')[0],
     notes: deal?.notes || '',
+    customFields: deal?.customFields || {},
   });
+
+  // Obter campos customizados para negócios
+  const customFields = organization?.settings?.customFields?.filter(
+    field => field.entity === 'deal'
+  ) || [];
+
+  // Carregar usuários se for admin ou manager
+  useEffect(() => {
+    const fetchUsers = async () => {
+      if (!currentUser?.organizationId || !db || (!isAdmin && !isManager)) {
+        return;
+      }
+
+      try {
+        const usersQuery = query(
+          collection(db, 'users'),
+          where('organizationId', '==', currentUser.organizationId),
+          where('approved', '==', true)
+        );
+        
+        const snapshot = await getDocs(usersQuery);
+        const usersData = snapshot.docs.map(doc => ({
+          ...doc.data(),
+          id: doc.id,
+        })) as User[];
+        
+        setUsers(usersData);
+      } catch (error) {
+        console.error('Error fetching users:', error);
+      }
+    };
+
+    fetchUsers();
+  }, [currentUser, isAdmin, isManager]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onSubmit({
       ...formData,
+      organizationId: currentUser?.organizationId || '',
+      funnelId: formData.funnelId || 'funnel_inbound',
+      customFields: formData.customFields,
+      tags: [],
       expectedCloseDate: new Date(formData.expectedCloseDate),
     });
   };
@@ -39,6 +86,16 @@ export const DealForm = ({ deal, clients, initialStage, onSubmit, onClose }: Dea
     setFormData({
       ...formData,
       [name]: name === 'value' || name === 'probability' ? Number(value) : value,
+    });
+  };
+
+  const handleCustomFieldChange = (fieldId: string, value: any) => {
+    setFormData({
+      ...formData,
+      customFields: {
+        ...formData.customFields,
+        [fieldId]: value,
+      },
     });
   };
 
@@ -58,6 +115,30 @@ export const DealForm = ({ deal, clients, initialStage, onSubmit, onClose }: Dea
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Seleção de Usuário (apenas para admins/managers) */}
+          {(isAdmin || isManager) && users.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                <UserIcon className="inline h-4 w-4 mr-1" />
+                Responsável
+              </label>
+              <select
+                name="userId"
+                value={formData.userId}
+                onChange={handleChange}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                required
+              >
+                <option value="">Selecione um usuário</option>
+                {users.map((user) => (
+                  <option key={user.id} value={user.id}>
+                    {user.name} ({user.role})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Cliente *
@@ -170,6 +251,25 @@ export const DealForm = ({ deal, clients, initialStage, onSubmit, onClose }: Dea
               placeholder="Detalhes sobre o negócio..."
             />
           </div>
+
+          {/* Campos Customizados */}
+          {customFields.length > 0 && (
+            <div className="pt-4 border-t border-gray-200">
+              <h4 className="text-sm font-semibold text-gray-900 mb-4">
+                Informações Adicionais
+              </h4>
+              <div className="space-y-4">
+                {customFields.map((field) => (
+                  <CustomFieldRenderer
+                    key={field.id}
+                    field={field}
+                    value={formData.customFields[field.id]}
+                    onChange={(value) => handleCustomFieldChange(field.id, value)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="flex space-x-3 pt-4">
             <button

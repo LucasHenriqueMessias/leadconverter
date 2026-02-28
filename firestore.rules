@@ -1,0 +1,40 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Regras para organizações
+    match /organizations/{orgId} {
+      // Permitir leitura e escrita apenas para usuários autenticados da organização
+      allow read, write: if request.auth != null && 
+        (request.auth.uid == resource.data.ownerId || 
+         exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.organizationId == orgId &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.approved == true);
+      
+      // Subcoleções da organização (clients, deals, tasks, quotes)
+      match /{collection}/{docId} {
+        allow read, write: if request.auth != null && 
+          exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.organizationId == orgId &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.approved == true;
+      }
+    }
+    
+    // Regras para usuários globais
+    match /users/{userId} {
+      // Usuário pode ler/escrever seus próprios dados
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+      
+      // Admins podem gerenciar usuários da mesma organização
+      allow read, write: if request.auth != null && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.organizationId == 
+        get(/databases/$(database)/documents/users/$(userId)).data.organizationId;
+    }
+    
+    // Permitir criação de novos usuários (para registro)
+    match /users/{userId} {
+      allow create: if request.auth != null && request.auth.uid == userId;
+    }
+  }
+}

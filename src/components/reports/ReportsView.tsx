@@ -15,7 +15,8 @@ import {
   Calendar,
   Percent,
   PieChart,
-  Filter
+  Filter,
+  AlertCircle
 } from 'lucide-react';
 import {
   BarChart,
@@ -29,6 +30,7 @@ import {
   Pie,
   Cell
 } from 'recharts';
+import { LossAnalysis } from './LossAnalysis';
 
 interface ReportsViewProps {
   clients: Client[];
@@ -628,6 +630,15 @@ export const ReportsView = ({ clients, deals, tasks, quotes }: ReportsViewProps)
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Análise de Perdas */}
+      <div className="bg-white rounded-lg shadow p-6">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+          <AlertCircle className="h-5 w-5 text-red-600" />
+          Análise de Perdas
+        </h3>
+        <LossAnalysis deals={deals} />
       </div>
 
       {/* Insights e Recomendações */}

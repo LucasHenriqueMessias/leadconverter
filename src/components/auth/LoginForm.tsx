@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
-import { doc, setDoc } from 'firebase/firestore';
+import { doc, setDoc, getDocs, collection, query, where } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase';
 import { UserPlus, LogIn } from 'lucide-react';
 import { Logo } from '@/components/ui/Logo';
@@ -33,11 +33,77 @@ export const LoginForm = () => {
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
         const user = userCredential.user;
         
+        // Verificar se existe um convite para este email
+        const invitesQuery = query(
+          collection(db, 'invites'),
+          where('email', '==', email.toLowerCase().trim()),
+          where('status', '==', 'pending')
+        );
+        const invitesSnapshot = await getDocs(invitesQuery);
+        
+        let organizationId = '';
+        let userRole: 'admin' | 'manager' | 'sales' | 'viewer' = 'sales';
+        let approved = false;
+        
+        if (!invitesSnapshot.empty) {
+          // Usuário foi convidado - usar dados do convite
+          const invite = invitesSnapshot.docs[0].data();
+          organizationId = invite.organizationId;
+          userRole = invite.role;
+          approved = true; // Usuários convidados são aprovados automaticamente
+          
+          // Marcar convite como usado
+          await setDoc(doc(db, 'invites', invitesSnapshot.docs[0].id), {
+            ...invite,
+            status: 'accepted',
+            usedAt: new Date(),
+          });
+        } else {
+          // Verificar se é o primeiro usuário globalmente
+          const usersSnapshot = await getDocs(collection(db, 'users'));
+          const isFirstUser = usersSnapshot.size === 0;
+          
+          if (isFirstUser) {
+            // Criar organização para o primeiro usuário
+            const orgId = `org_${user.uid}`;
+            const organization = {
+              id: orgId,
+              name: `Organização de ${name}`,
+              plan: 'professional',
+              maxUsers: 15,
+              maxDeals: 1000,
+              ownerId: user.uid,
+              settings: {
+                customFields: [],
+                salesStages: [],
+                integrations: [],
+                branding: {
+                  primaryColor: '#3B82F6',
+                  secondaryColor: '#1E40AF',
+                },
+              },
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            };
+            
+            await setDoc(doc(db, 'organizations', orgId), organization);
+            organizationId = orgId;
+            userRole = 'admin';
+            approved = true;
+          } else {
+            // Usuário não foi convidado e não é o primeiro - não aprovar
+            approved = false;
+          }
+        }
+        
         // Criar documento do usuário no Firestore
         await setDoc(doc(db, 'users', user.uid), {
           name,
           email,
-          approved: false, // Requer aprovação
+          organizationId: organizationId,
+          role: userRole,
+          permissions: [],
+          approved: approved,
           createdAt: new Date(),
           updatedAt: new Date(),
         });
