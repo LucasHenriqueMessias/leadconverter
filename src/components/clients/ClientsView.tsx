@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useMemo } from 'react';
-import { collection, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
+import { useEffect, useMemo, useState } from 'react';
+import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/contexts/AuthContext';
 import { Client } from '@/types';
@@ -9,7 +9,6 @@ import { Plus, Edit, Trash2, Phone, Mail, User, Eye } from 'lucide-react';
 import { ClientForm } from './ClientForm';
 import { ClientDetailsModal } from './ClientDetailsModal';
 import { UserFilter } from '../sales/UserFilter';
-import { WhatsAppButton } from '../integrations/WhatsAppButton';
 
 interface ClientsViewProps {
   clients: Client[];
@@ -23,6 +22,48 @@ export const ClientsView = ({ clients, setClients }: ClientsViewProps) => {
   const [viewingClient, setViewingClient] = useState<Client | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [selectedOrigin, setSelectedOrigin] = useState<string>('all');
+  const [clientsWithInteraction, setClientsWithInteraction] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!db || !user?.organizationId) return;
+
+    const interactionsRef = collection(db, `organizations/${user.organizationId}/interactions`);
+    const unsubscribe = onSnapshot(
+      interactionsRef,
+      (snapshot) => {
+        const ids = new Set<string>();
+        snapshot.docs.forEach((interactionDoc) => {
+          const interaction = interactionDoc.data();
+          if (interaction.clientId) {
+            ids.add(interaction.clientId);
+          }
+        });
+        setClientsWithInteraction(ids);
+      },
+      (error) => {
+        console.error('Error loading interactions:', error);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [user?.organizationId]);
+
+  const availableOrigins = useMemo(() => {
+    const origins = new Set<string>();
+
+    clients.forEach((client) => {
+      const origin =
+        (client.customFields?.leadOrigin as string | undefined) ||
+        (client as Client & { leadOrigin?: string }).leadOrigin;
+
+      if (origin && origin.trim()) {
+        origins.add(origin);
+      }
+    });
+
+    return Array.from(origins).sort();
+  }, [clients]);
 
   // Filtrar clientes baseado no usuário selecionado e permissões
   const filteredClients = useMemo(() => {
@@ -37,13 +78,27 @@ export const ClientsView = ({ clients, setClients }: ClientsViewProps) => {
     }
     // Se admin/manager e não selecionou usuário, mostrar todos
 
+    if (selectedOrigin !== 'all') {
+      clientsToShow = clientsToShow.filter((client) => {
+        const origin =
+          (client.customFields?.leadOrigin as string | undefined) ||
+          (client as Client & { leadOrigin?: string }).leadOrigin ||
+          'Nao informado';
+        return origin === selectedOrigin;
+      });
+    }
+
     // Aplicar filtro de busca
     return clientsToShow.filter(client =>
       client.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       client.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
       client.phone.includes(searchTerm)
     );
-  }, [clients, selectedUserId, searchTerm, isAdmin, isManager, user?.id]);
+  }, [clients, selectedUserId, selectedOrigin, searchTerm, isAdmin, isManager, user?.id]);
+
+  const clientsWithoutInteraction = useMemo(() => {
+    return filteredClients.filter((client) => !clientsWithInteraction.has(client.id)).length;
+  }, [filteredClients, clientsWithInteraction]);
 
   const handleAddClient = async (clientData: Omit<Client, 'id' | 'userId' | 'createdAt' | 'updatedAt'>) => {
     if (!user || !db || !user.organizationId) return;
@@ -146,17 +201,36 @@ export const ClientsView = ({ clients, setClients }: ClientsViewProps) => {
       </div>
 
       <div className="mb-6">
-        <input
-          type="text"
-          placeholder="Buscar clientes..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-        />
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="md:col-span-2">
+            <input
+              type="text"
+              placeholder="Buscar clientes..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+          </div>
+          <div>
+            <select
+              value={selectedOrigin}
+              onChange={(e) => setSelectedOrigin(e.target.value)}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="all">Origem do Lead: Todas</option>
+              {availableOrigins.map((origin) => (
+                <option key={origin} value={origin}>
+                  {origin}
+                </option>
+              ))}
+              <option value="Nao informado">Nao informado</option>
+            </select>
+          </div>
+        </div>
       </div>
 
       {/* Métricas */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-white rounded-lg shadow p-4">
           <div className="text-sm font-medium text-gray-600">Total de Clientes</div>
           <div className="text-2xl font-bold text-gray-900">{filteredClients.length}</div>
@@ -175,6 +249,10 @@ export const ClientsView = ({ clients, setClients }: ClientsViewProps) => {
         <div className="bg-white rounded-lg shadow p-4">
           <div className="text-sm font-medium text-gray-600">Clientes Ativos</div>
           <div className="text-2xl font-bold text-green-600">{filteredClients.length}</div>
+        </div>
+        <div className="bg-white rounded-lg shadow p-4">
+          <div className="text-sm font-medium text-gray-600">Sem Interacao</div>
+          <div className="text-2xl font-bold text-amber-600">{clientsWithoutInteraction}</div>
         </div>
       </div>
 
@@ -208,7 +286,14 @@ export const ClientsView = ({ clients, setClients }: ClientsViewProps) => {
                         </div>
                       </div>
                       <div className="ml-4">
-                        <div className="text-sm font-medium text-gray-900">{client.name}</div>
+                        <div className="text-sm font-medium text-gray-900 flex items-center gap-2">
+                          <span>{client.name}</span>
+                          {!clientsWithInteraction.has(client.id) && (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
+                              Sem interacao
+                            </span>
+                          )}
+                        </div>
                         <div className="text-sm text-gray-500">{client.document}</div>
                       </div>
                     </div>
@@ -218,9 +303,16 @@ export const ClientsView = ({ clients, setClients }: ClientsViewProps) => {
                     <div className="text-sm text-gray-500">{client.phone}</div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                      {client.segment}
-                    </span>
+                    <div className="flex flex-col gap-1">
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 w-fit">
+                        {client.segment || 'Sem segmento'}
+                      </span>
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 w-fit">
+                        {((client.customFields?.leadOrigin as string | undefined) ||
+                          (client as Client & { leadOrigin?: string }).leadOrigin ||
+                          'Nao informado')}
+                      </span>
+                    </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
                     <button

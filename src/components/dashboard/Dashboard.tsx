@@ -16,10 +16,11 @@ import { FunnelManager } from '../funnels/FunnelManager';
 import { ForecastReport } from '../reports/ForecastReport';
 import { TagsManager } from '../tags/TagsManager';
 import { LeadScoringView } from '../scoring/LeadScoringView';
+import { ApiKeysManager } from '../integrations';
 import { useNotifications, Notification } from '@/hooks/useNotifications';
 import { useRealtimeClients, useRealtimeDeals, useRealtimeTasks, useRealtimeQuotes } from '@/hooks/useRealtimeData';
 
-export type DashboardView = 'overview' | 'clients' | 'sales' | 'tasks' | 'quotes' | 'reports' | 'users' | 'customFields' | 'funnels' | 'forecast' | 'tags' | 'scoring';
+export type DashboardView = 'overview' | 'clients' | 'sales' | 'tasks' | 'quotes' | 'reports' | 'users' | 'customFields' | 'funnels' | 'forecast' | 'tags' | 'scoring' | 'api-keys';
 
 export const Dashboard = () => {
   const { user } = useAuth();
@@ -79,6 +80,8 @@ export const Dashboard = () => {
         return <ReportsView clients={clients} deals={deals} tasks={tasks} quotes={quotes} />;
       case 'users':
         return <UsersView />;
+      case 'api-keys':
+        return <ApiKeysManager />;
       case 'customFields':
         return <CustomFieldsManager />;
       case 'funnels':

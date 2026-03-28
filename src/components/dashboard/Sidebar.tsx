@@ -15,7 +15,8 @@ import {
   Layers,
   TrendingUp,
   Tags,
-  Brain
+  Brain,
+  Key
 } from 'lucide-react';
 import { Logo } from '@/components/ui/Logo';
 
@@ -37,6 +38,7 @@ export const Sidebar = ({ currentView, setCurrentView }: SidebarProps) => {
     { id: 'forecast', label: 'Forecast', icon: TrendingUp, show: canViewReports },
     { id: 'scoring', label: 'Lead Scoring', icon: Brain, show: canViewReports },
     { id: 'users', label: 'Usuários', icon: UserCog, show: canManageUsers },
+    { id: 'api-keys', label: 'API Keys', icon: Key, show: canManageUsers },
     { id: 'funnels', label: 'Funis de Vendas', icon: Layers, show: canManageUsers },
     { id: 'tags', label: 'Tags', icon: Tags, show: true },
     { id: 'customFields', label: 'Campos Personalizados', icon: Sliders, show: canManageUsers },

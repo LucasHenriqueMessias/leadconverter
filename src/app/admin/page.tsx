@@ -3,14 +3,16 @@
 import { useState } from 'react';
 import { FirebaseTest } from '@/components/admin/FirebaseTest';
 import { MigrationPanel } from '@/components/admin/MigrationPanel';
-import { Settings, Database, TestTube } from 'lucide-react';
+import { ApiKeysManager } from '@/components/integrations';
+import { Settings, Database, TestTube, Key } from 'lucide-react';
 
 export default function AdminPage() {
-  const [activeTab, setActiveTab] = useState<'test' | 'migration'>('test');
+  const [activeTab, setActiveTab] = useState<'test' | 'migration' | 'api-keys'>('test');
 
   const tabs = [
     { id: 'test', label: 'Teste Firebase', icon: TestTube },
     { id: 'migration', label: 'Migração', icon: Database },
+    { id: 'api-keys', label: 'API Keys', icon: Key },
   ];
 
   return (
@@ -33,7 +35,7 @@ export default function AdminPage() {
                 return (
                   <button
                     key={tab.id}
-                    onClick={() => setActiveTab(tab.id as any)}
+                    onClick={() => setActiveTab(tab.id as 'test' | 'migration' | 'api-keys')}
                     className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center space-x-2 ${
                       activeTab === tab.id
                         ? 'border-blue-500 text-blue-600'
@@ -52,6 +54,7 @@ export default function AdminPage() {
         {/* Content */}
         {activeTab === 'test' && <FirebaseTest />}
         {activeTab === 'migration' && <MigrationPanel />}
+        {activeTab === 'api-keys' && <ApiKeysManager />}
       </div>
     </div>
   );
