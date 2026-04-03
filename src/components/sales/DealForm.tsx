@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/contexts/AuthContext';
-import { Deal, Client, User } from '@/types';
+import { Deal, Client, User, SalesFunnelStage } from '@/types';
 import { X, User as UserIcon } from 'lucide-react';
 import { DEFAULT_STAGES } from '@/constants/salesFunnel';
 import { CustomFieldRenderer } from '@/components/customFields/CustomFieldRenderer';
@@ -13,21 +13,32 @@ interface DealFormProps {
   deal: Deal | null;
   clients: Client[];
   initialStage?: string;
+  funnelId?: string;
+  stages?: SalesFunnelStage[];
   onSubmit: (dealData: Omit<Deal, 'id' | 'createdAt' | 'updatedAt'>) => void;
   onClose: () => void;
 }
 
-export const DealForm = ({ deal, clients, initialStage, onSubmit, onClose }: DealFormProps) => {
+export const DealForm = ({
+  deal,
+  clients,
+  initialStage,
+  funnelId,
+  stages,
+  onSubmit,
+  onClose,
+}: DealFormProps) => {
   const { user: currentUser, isAdmin, isManager, organization } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
+  const availableStages = stages && stages.length > 0 ? stages : DEFAULT_STAGES;
   const [formData, setFormData] = useState({
     clientId: deal?.clientId || '',
     userId: deal?.userId || currentUser?.id || '',
     title: deal?.title || '',
     value: deal?.value || 0,
-    stage: deal?.stage || initialStage || 'lead',
+    stage: deal?.stage || initialStage || availableStages[0]?.id || 'lead',
     probability: deal?.probability || 50,
-    funnelId: deal?.funnelId || 'funnel_inbound',
+    funnelId: deal?.funnelId || funnelId || 'funnel_inbound',
     expectedCloseDate: deal?.expectedCloseDate 
       ? new Date(deal.expectedCloseDate).toISOString().split('T')[0]
       : new Date().toISOString().split('T')[0],
@@ -217,7 +228,7 @@ export const DealForm = ({ deal, clients, initialStage, onSubmit, onClose }: Dea
               onChange={handleChange}
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             >
-              {DEFAULT_STAGES.map((stage) => (
+              {availableStages.map((stage) => (
                 <option key={stage.id} value={stage.id}>
                   {stage.name}
                 </option>

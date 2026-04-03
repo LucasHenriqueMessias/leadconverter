@@ -1,0 +1,65 @@
+@baseUrl = https://lead-converter.netlify.app/
+@apiPath = /api/leads
+@apiKey = lc_org_wsr9g02ZxGZjn94EyR0fB4rn42r1_npx1ih535z
+
+### 1) Criar lead (payload completo)
+# @name createLeadFull
+POST {{baseUrl}}{{apiPath}}
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "name": "Luiz Gostoso",
+  "email": "luiz.gostoso@exemplo.com",
+  "phone": "(11) 99999-9999",
+  "document": "123.456.789-09",
+  "segment": "Fotografia de eventos",
+  "notes": "Lead vindo da landing page de servicos premium.",
+  "tags": ["quente", "orcamento"],
+  "origin": "Instagram"
+}
+
+### 2) Criar lead (payload minimo valido)
+# @name createLeadMinimal
+POST {{baseUrl}}{{apiPath}}
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "name": "Joao Lima",
+  "email": "joao.lima@exemplo.com",
+  "phone": "+55 (21) 98888-7777",
+  "origin": "Site"
+}
+
+### 3) Erro de validacao (email e telefone invalidos)
+# @name createLeadValidationError
+POST {{baseUrl}}{{apiPath}}
+Content-Type: application/json
+x-api-key: {{apiKey}}
+
+{
+  "name": "A",
+  "email": "email-invalido",
+  "phone": "123",
+  "origin": "TikTok"
+}
+
+### 4) Erro de autenticacao (sem x-api-key)
+# @name createLeadMissingApiKey
+POST {{baseUrl}}{{apiPath}}
+Content-Type: application/json
+
+{
+  "name": "Carlos Mendes",
+  "email": "carlos@exemplo.com",
+  "phone": "(31) 97777-6666",
+  "origin": "Google"
+}
+
+### 5) Preflight/CORS
+# @name leadsOptions
+OPTIONS {{baseUrl}}{{apiPath}}
+Origin: https://exemplo.com
+Access-Control-Request-Method: POST
+Access-Control-Request-Headers: Content-Type, x-api-key

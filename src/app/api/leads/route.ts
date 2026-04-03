@@ -2,30 +2,43 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAdminDb } from '@/lib/firebaseAdmin';
 import { LeadIngestionSchema } from '@/lib/validation';
 
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, x-api-key',
+};
+
+function jsonWithCors(body: unknown, status: number) {
+  return NextResponse.json(body, {
+    status,
+    headers: CORS_HEADERS,
+  });
+}
+
 export async function POST(request: NextRequest) {
   try {
     const adminDb = getAdminDb();
 
     if (!adminDb) {
-      return NextResponse.json(
+      return jsonWithCors(
         {
           error: 'Firebase Admin nao configurado no servidor',
           code: 'ADMIN_DB_ERROR',
           details:
             'Configure FIREBASE_ADMIN_PROJECT_ID, FIREBASE_ADMIN_CLIENT_EMAIL e FIREBASE_ADMIN_PRIVATE_KEY no .env.local',
         },
-        { status: 500 }
+        500
       );
     }
 
     const apiKey = request.headers.get('x-api-key');
     if (!apiKey) {
-      return NextResponse.json(
+      return jsonWithCors(
         {
           error: 'API Key nao fornecida (header: x-api-key)',
           code: 'MISSING_API_KEY',
         },
-        { status: 401 }
+        401
       );
     }
 
@@ -37,12 +50,12 @@ export async function POST(request: NextRequest) {
       .get();
 
     if (apiKeySnapshot.empty) {
-      return NextResponse.json(
+      return jsonWithCors(
         {
           error: 'API Key invalida ou inativa',
           code: 'INVALID_API_KEY',
         },
-        { status: 401 }
+        401
       );
     }
 
@@ -55,12 +68,12 @@ export async function POST(request: NextRequest) {
     try {
       payloadData = await request.json();
     } catch {
-      return NextResponse.json(
+      return jsonWithCors(
         {
           error: 'JSON invalido no body',
           code: 'INVALID_JSON',
         },
-        { status: 400 }
+        400
       );
     }
 
@@ -72,13 +85,13 @@ export async function POST(request: NextRequest) {
         message: err.message,
       }));
 
-      return NextResponse.json(
+      return jsonWithCors(
         {
           error: 'Validacao falhou',
           code: 'VALIDATION_ERROR',
           details: errors,
         },
-        { status: 400 }
+        400
       );
     }
 
@@ -129,7 +142,7 @@ export async function POST(request: NextRequest) {
       console.warn('Erro ao criar interacao de ingestion:', error);
     }
 
-    return NextResponse.json(
+    return jsonWithCors(
       {
         success: true,
         message: 'Lead criado com sucesso',
@@ -137,18 +150,18 @@ export async function POST(request: NextRequest) {
         organizationId,
         origin: leadData.origin,
       },
-      { status: 201 }
+      201
     );
   } catch (error) {
     console.error('Erro ao processar lead:', error);
 
-    return NextResponse.json(
+    return jsonWithCors(
       {
         error: 'Erro interno do servidor',
         code: 'INTERNAL_ERROR',
         message: error instanceof Error ? error.message : 'Erro desconhecido',
       },
-      { status: 500 }
+      500
     );
   }
 }
@@ -156,10 +169,6 @@ export async function POST(request: NextRequest) {
 export async function OPTIONS() {
   return new NextResponse(null, {
     status: 200,
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, x-api-key',
-    },
+    headers: CORS_HEADERS,
   });
 }

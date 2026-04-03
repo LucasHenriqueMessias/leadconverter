@@ -151,9 +151,11 @@ export const SalesFunnelView = ({ deals, setDeals, clients }: SalesFunnelViewPro
     try {
       // Para admin/manager, permitir especificar userId, senão usar o próprio
       const finalUserId = (isAdmin || isManager) && selectedUserId ? selectedUserId : user.id;
+      const finalFunnelId = selectedFunnelId || dealData.funnelId || 'funnel_inbound';
       
       const docRef = await addDoc(collection(db, `organizations/${user.organizationId}/deals`), {
         ...dealData,
+        funnelId: finalFunnelId,
         userId: finalUserId,
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -162,6 +164,7 @@ export const SalesFunnelView = ({ deals, setDeals, clients }: SalesFunnelViewPro
       const newDeal: Deal = {
         id: docRef.id,
         ...dealData,
+        funnelId: finalFunnelId,
         userId: finalUserId,
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -358,7 +361,7 @@ export const SalesFunnelView = ({ deals, setDeals, clients }: SalesFunnelViewPro
             />
           )}
           <button
-            onClick={() => openAddForm('lead')}
+            onClick={() => openAddForm(stages[0]?.id || 'lead')}
             className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center space-x-2 hover:bg-blue-700"
           >
             <Plus className="h-4 w-4" />
@@ -463,6 +466,8 @@ export const SalesFunnelView = ({ deals, setDeals, clients }: SalesFunnelViewPro
           deal={editingDeal}
           clients={clients}
           initialStage={selectedStage}
+          funnelId={selectedFunnelId || undefined}
+          stages={stages}
           onSubmit={editingDeal ? handleUpdateDeal : handleAddDeal}
           onClose={() => {
             setIsFormOpen(false);

@@ -18,9 +18,13 @@ export function useRealtimeData<T>(options: UseRealtimeDataOptions) {
 
   useEffect(() => {
     if (!user?.organizationId || !db) {
+      setData([]);
+      setError(null);
       setLoading(false);
       return;
     }
+
+    setLoading(true);
 
     try {
       // Determinar escopo baseado no role do usuário
@@ -81,6 +85,7 @@ export function useRealtimeData<T>(options: UseRealtimeDataOptions) {
         },
         (err) => {
           console.error(`Error listening to ${options.collectionName}:`, err);
+          setData([]);
           setError(err.message);
           setLoading(false);
         }
@@ -89,10 +94,20 @@ export function useRealtimeData<T>(options: UseRealtimeDataOptions) {
       return unsubscribe;
     } catch (err) {
       console.error(`Error setting up ${options.collectionName} listener:`, err);
+      setData([]);
       setError(err instanceof Error ? err.message : 'Unknown error');
       setLoading(false);
     }
-  }, [user, options.collectionName, isAdmin, isManager]);
+  }, [
+    user?.organizationId,
+    user?.id,
+    user?.teamId,
+    user?.role,
+    options.collectionName,
+    options.additionalConstraints,
+    isAdmin,
+    isManager,
+  ]);
 
   return { data, loading, error, setData };
 }
